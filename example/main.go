@@ -13,8 +13,8 @@ import (
 
 func main() {
 	logger, err := multilog.NewLogger(
-		multilog.WithZap(zap.NewDevelopmentConfig()),
-		multilog.WithSentry(sentry.ClientOptions{
+		multilog.WithZap(multilog.Info, zap.NewDevelopmentConfig()),
+		multilog.WithSentry(multilog.Error, sentry.ClientOptions{
 			Dsn: "", // Enter Sentry DSN here
 		}),
 	)

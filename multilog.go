@@ -1,29 +1,33 @@
 package multilog
 
 import (
+	"errors"
+	"fmt"
 	"log"
-	"reflect"
-	"time"
-
-	"github.com/getsentry/sentry-go"
-	"go.uber.org/zap"
 )
 
 const (
-	Debug LogLevel = "debug"
-	Info  LogLevel = "info"
-	Error LogLevel = "error"
-	Fatal LogLevel = "fatal"
-	Panic LogLevel = "panic"
+	Debug LogLevel = 1
+	Info  LogLevel = 2
+	Error LogLevel = 3
+	Fatal LogLevel = 4
+	Panic LogLevel = 5
 )
 
+type Handler interface {
+	Flush() error
+	Debug(msg string)
+	Info(msg string)
+	Error(err error)
+	Level() LogLevel
+}
+
 type Logger struct {
-	zapLogger    *zap.Logger
-	sentryLogger *sentry.Client
+	handlers []Handler
 }
 
 type Options func(*Logger) error
-type LogLevel string
+type LogLevel int8
 
 func NewLogger(options ...Options) (*Logger, error) {
 	logger := &Logger{}
@@ -36,64 +40,63 @@ func NewLogger(options ...Options) (*Logger, error) {
 	return logger, nil
 }
 
-func (l *Logger) Flush() error {
-	l.sentryLogger.Flush(time.Second * 5)
+func WithHandler(handler Handler) Options {
+	return func(logger *Logger) error {
+		if handler == nil {
+			return errors.New("handler must be specified")
+		}
+		logger.handlers = append(logger.handlers, handler)
 
-	if l.zapLogger != nil {
-		return l.zapLogger.Sync()
+		return nil
+	}
+}
+
+func (l *Logger) Flush() (err error) {
+	for _, handler := range l.handlers {
+		e := handler.Flush()
+		if e != nil {
+			err = fmt.Errorf("error flushing: %w", e)
+		}
 	}
 
-	return nil
+	return err
 }
 
 func (l *Logger) Debug(msg string) {
-	if l.sentryLogger != nil {
-		event := sentryEventWithMessageAndLevel(msg, sentry.LevelDebug)
-		event.Threads = []sentry.Thread{{
-			Stacktrace: getSentryStackTrace(nil),
-			Current:    true,
-		}}
-		l.sentryLogger.CaptureEvent(event, nil, sentry.CurrentHub().Scope())
+	if len(l.handlers) == 0 {
+		log.Print(msg)
 	}
 
-	if l.zapLogger != nil {
-		l.zapLogger.Debug(msg)
-	} else {
-		log.Printf(msg)
+	for _, handler := range l.handlers {
+		if handler.Level() > Debug {
+			continue
+		}
+		handler.Debug(msg)
 	}
 }
 
 func (l *Logger) Info(msg string) {
-	if l.sentryLogger != nil {
-		event := sentryEventWithMessageAndLevel(msg, sentry.LevelInfo)
-		event.Threads = []sentry.Thread{{
-			Stacktrace: getSentryStackTrace(nil),
-			Current:    true,
-		}}
-		l.sentryLogger.CaptureEvent(event, nil, sentry.CurrentHub().Scope())
+	if len(l.handlers) == 0 {
+		log.Print(msg)
 	}
 
-	if l.zapLogger != nil {
-		l.zapLogger.Info(msg)
-	} else {
-		log.Printf(msg)
+	for _, handler := range l.handlers {
+		if handler.Level() > Info {
+			continue
+		}
+		handler.Info(msg)
 	}
 }
 
 func (l *Logger) Error(err error) {
-	if l.sentryLogger != nil {
-		event := sentryEventWithMessageAndLevel(err.Error(), sentry.LevelError)
-		event.Exception = []sentry.Exception{{
-			Value:      err.Error(),
-			Type:       reflect.TypeOf(err).String(),
-			Stacktrace: getSentryStackTrace(err),
-		}}
-		l.sentryLogger.CaptureEvent(event, nil, sentry.CurrentHub().Scope())
+	if len(l.handlers) == 0 {
+		log.Print(err)
 	}
 
-	if l.zapLogger != nil {
-		l.zapLogger.Error(err.Error(), zap.Error(err))
-	} else {
-		log.Printf(err.Error())
+	for _, handler := range l.handlers {
+		if handler.Level() > Error {
+			continue
+		}
+		handler.Error(err)
 	}
 }
